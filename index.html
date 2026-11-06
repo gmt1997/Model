@@ -3,7 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Modelo FIDC — Carteira de Recebíveis a Valor Presente</title>
+<title>Simulador de FIDC — Carteira de Recebíveis a Valor Presente</title>
+<meta name="description" content="Simulador educativo de FIDC de recebíveis: carteira a valor presente, revolvência, cascata Sênior/Mezanino/Subordinada, cenários e teste de estresse. Exporta para Excel.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://gmt1997.github.io/Model/">
+<meta property="og:title" content="Simulador de FIDC — carteira de recebíveis a valor presente">
+<meta property="og:description" content="Mexa nas premissas e veja a cascata de um FIDC recalcular mês a mês. Ferramenta educativa e de simulação.">
+<meta property="og:image" content="https://gmt1997.github.io/Model/og-image.png">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="627">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -265,7 +275,7 @@ footer{max-width:1560px;margin:0 auto;padding:0 28px 40px;font-size:.66rem;color
     <div id="panels"></div>
   </main>
 </div>
-<footer>Modelo de simulação — premissas ilustrativas, não constitui oferta. Convenções: taxa de cessão fixa por safra; prazo dinâmico truncado no vencimento do fundo; juros das cotas, unwind do ativo e rendimento do caixa em base 252 com calendário ANBIMA; amortização sequencial (Sênior → Mezanino → Subordinada) após carência e encerramento da revolvência; caixa mínimo dinâmico sobre a emissão acumulada.</footer>
+<footer><b>Ferramenta para fins educativos e de simulação.</b> Premissas hipotéticas; não representa nenhuma operação real e não constitui oferta nem recomendação de investimento. Simplificações relevantes: CDI constante no horizonte, sem pré-pagamento, inadimplência como % dos recebimentos. Cada operação tem particularidades — construa e valide o seu próprio modelo.<br><br> Convenções: taxa de cessão fixa por safra; prazo dinâmico truncado no vencimento do fundo; juros das cotas, unwind do ativo e rendimento do caixa em base 252 com calendário ANBIMA; amortização sequencial (Sênior → Mezanino → Subordinada) após carência e encerramento da revolvência; caixa mínimo dinâmico sobre a emissão acumulada.</footer>
 
 <script>
 "use strict";
@@ -510,10 +520,15 @@ function run(p){
   for(let m=1;m<=M;m++){ flS.push(A.sPg[m]+A.sAm[m]-A.apS[m]); flM.push(A.mPg[m]+A.mAm[m]-A.apM[m]); flQ.push(A.qPg[m]+A.qAm[m]-A.apQ[m]); flB.push(A.dSub[m]-A.apB[m]); }
   // ---- curvas de rentabilidade acumulada (PU de competência, base 252) ----
   // CDI acumulado (benchmark) + cotas Sênior/Mezanino por ((1+CDI)(1+spread))^(du/252).
-  // Subordinada: rentabilidade de caixa realizada (resultado atribuível ÷ capital vivo).
+  // Subordinada: PU de cota — resultado atribuível do mês ÷ PL da Sub no início do mês.
   A.cdiAc=[0]; A.senAc=[0]; A.mezAc=[0]; A.mzbAc=[0]; A.subAc=[0];
   A.senPU=[1]; A.mezPU=[1]; A.mzbPU=[1];
   const apTotB_local=plB0+A.apB.reduce((a,b)=>a+b,0); // capital total aportado na sub (fixo, = Modelo!C90)
+  // PL da Subordinada (implícito) = ativo − saldos de Sênior e Mezaninos; base do PU da cota
+  const plSubM=(m)=>A.ativo[m]-A.sE[m]-A.mE[m]-(A.qE[m]||0);
+  A.plSub=[]; for(let m=0;m<=M;m++) A.plSub[m]=plSubM(m);
+  // retorno do mês sobre o PL no início do mês (PU de cota: aportes entram ao PU vigente, sem diluir)
+  const rPU=(res,m)=>{const b=A.plSub[m-1]; return b>1e-6?Math.max(-1,res/b):0;};
   for(let m=1;m<=M;m++){
     const cdiM=Math.pow(1+p.cdi,du[m]/252)-1;
     A.cdiAc[m]=(1+(A.cdiAc[m-1]))*(1+cdiM)-1;
@@ -522,10 +537,10 @@ function run(p){
     const rQ=Math.pow((1+p.cdi)*(1+p.sprMB),du[m]/252)-1;
     A.senPU[m]=A.senPU[m-1]*(1+rS); A.mezPU[m]=A.mezPU[m-1]*(1+rM); A.mzbPU[m]=A.mzbPU[m-1]*(1+rQ);
     A.senAc[m]=A.senPU[m]-1; A.mezAc[m]=A.mezPU[m]-1; A.mzbAc[m]=A.mzbPU[m]-1;
-    // Subordinada: resultado atribuível no mês ÷ capital TOTAL aportado na sub (fixo), capitalizado
+    // Subordinada: resultado atribuível no mês ÷ PL da Sub no início do mês, capitalizado (PU da cota)
     const resSub=A.unw[m]-A.perda[m]+A.recup[m]+A.rend[m]-A.dTot[m]-A.sJ[m]-A.mJ[m]-A.qJ[m];
-    const rSub=apTotB_local>0?resSub/apTotB_local:0;
-    A.subAc[m]=(1+(A.subAc[m-1]))*(1+rSub)-1;
+    const rSub=rPU(resSub,m);
+    A.subAc[m]=Math.max(-1,(1+(A.subAc[m-1]))*(1+rSub)-1);
   }
   const xirr=(fl)=>{
     const t=date.map(d=>(d-date[0])/86400000/365);
@@ -603,8 +618,8 @@ function run(p){
   A.subAcAI=[0];
   for(let m=1;m<=M;m++){
     const resSub=A.unw[m]-A.perda[m]+A.recup[m]+A.rend[m]-A.dTot[m]-A.sJ[m]-A.mJ[m]-A.qJ[m] - (m===1?estrut:0);
-    const rSub=apTotB_local>0?resSub/apTotB_local:0;
-    A.subAcAI[m]=(1+(A.subAcAI[m-1]))*(1+rSub)-1;
+    const rSub=rPU(resSub,m);
+    A.subAcAI[m]=Math.max(-1,(1+(A.subAcAI[m-1]))*(1+rSub)-1);
   }
   R.subAcAI=A.subAcAI;
   // ---- custo all-in ponderado da estrutura de capital (inclui a estruturação amortizada) ----
@@ -2185,7 +2200,7 @@ function buildWorkbook(P, HOLIDAYS_ARR, cessArr, X){
   rn.fx(17,C0,'-Premissas!$C$52',9); rn.fx(18,C0,'1',5); rn.fx(20,C0,'0',6);
   // Subordinada
   rn.str(22,2,'Fluxo Cota Subordinada',13);
-  rn.str(23,2,'Rentabilidade da cota (mês) — resultado ÷ capital aportado',12);
+  rn.str(23,2,'Rentabilidade da cota (mês) — resultado (sem estruturação) ÷ PL da Sub no início do mês',12);
   rn.str(24,2,'Rentabilidade da cota acumulada',13);
   rn.fx(22,C0,'-Premissas!$C$53',9); rn.fx(24,C0,'0',6);
   for(let m=1;m<=M;m++){
@@ -2203,8 +2218,8 @@ function buildWorkbook(P, HOLIDAYS_ARR, cessArr, X){
     rn.fx(62,C0+m,`${c}61/${p}61-1`,6);
     rn.fx(63,C0+m,`(1+${c}62)*(1+${p}63)-1`,6);
     rn.fx(22,C0+m,`Modelo!${c}74-Modelo!${c}22`,9);
-    rn.fx(23,C0+m,`DRE!${dcolK(m)}21/Modelo!$C$90`,6);
-    rn.fx(24,C0+m,`(1+${c}23)*(1+${p}24)-1`,6);
+    rn.fx(23,C0+m,`IF(Modelo!${p}80>0.000001,MAX(-1,(DRE!${dcolK(m)}21-DRE!${dcolK(m)}22)/Modelo!${p}80),0)`,6);
+    rn.fx(24,C0+m,`MAX(-1,(1+${c}23)*(1+${p}24)-1)`,6);
   }
   rn.str(27,2,'RESULTADOS',15); rn.str(27,3,'',15);
   const rblk=(r0,nome,fr,spr)=>{
@@ -2276,8 +2291,8 @@ function buildWorkbook(P, HOLIDAYS_ARR, cessArr, X){
   rn.str(90,2,'Rentabilidade acumulada Subordinada all-in (curva J)',12);
   rn.fx(90,C0,'0',6);
   for(let m=1;m<=M;m++){ const c=col(m),p=col(m-1);
-    const rate = (m===1)?`${c}23-Premissas!$C$60/Modelo!$C$90`:`${c}23`;
-    rn.fx(90,C0+m,`(1+${p}90)*(1+(${rate}))-1`,6);
+    const rate = `IF(Modelo!${p}80>0.000001,MAX(-1,DRE!${dcolK(m)}21/Modelo!${p}80),0)`;   // DRE L21 já inclui o custo de estruturação no mês 1
+    rn.fx(90,C0+m,`MAX(-1,(1+${p}90)*(1+(${rate}))-1)`,6);
   }
   rn.str(92,2,'TIR Subordinada all-in (XIRR, a.a.)',13);
   rn.fx(92,3,`IFERROR(XIRR(C89:${LASTC}89,C7:${LASTC}7),"n/d")`,22);
